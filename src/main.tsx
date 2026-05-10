@@ -44,7 +44,15 @@ async function enrichWithRatioData(
 
     await Promise.all(batch.map(async (user) => {
       try {
-        const res = await fetch(`https://www.instagram.com/api/v1/users/${user.id}/info/`);
+        const res = await fetch(`https://www.instagram.com/api/v1/users/${user.id}/info/`, {
+          headers: {
+            'X-IG-App-ID': '936619743392459',
+          },
+          credentials: 'include',
+        });
+
+        if (!res.ok) return; // skip gracefully if still fails
+
         const data = await res.json();
         const info = data?.user;
         if (!info) return;
