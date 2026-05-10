@@ -109,14 +109,6 @@ export function getUsersForDisplay(
       filter.showBadRatioOnly &&
       !hasBadRatio(result.follower_count, result.following_count, filter.badRatioThreshold)
     ) {
-      // Debug: Log why user is being filtered out
-      console.log(`Filtered out ${result.username}:`, {
-        follower_count: result.follower_count,
-        following_count: result.following_count,
-        hasData: result.follower_count != null && result.following_count != null,
-        ratio: result.follower_count && result.following_count ? result.follower_count / result.following_count : 'N/A',
-        threshold: filter.badRatioThreshold
-      });
       continue;
     }
     const userMatchesSearchTerm =

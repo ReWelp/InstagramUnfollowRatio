@@ -31,6 +31,45 @@ function pauseScan() {
   scanningPaused = !scanningPaused;
 }
 
+// Enrichment function to fetch follower/following counts per user
+async function enrichWithRatioData(
+  results: readonly UserNode[],
+  setState: (fn: (s: State) => State) => void
+) {
+  const BATCH_SIZE = 3;
+  const DELAY_MS = 2000; // 2s between batches — stay under radar
+
+  for (let i = 0; i < results.length; i += BATCH_SIZE) {
+    const batch = results.slice(i, i + BATCH_SIZE);
+
+    await Promise.all(batch.map(async (user) => {
+      try {
+        const res = await fetch(`https://www.instagram.com/api/v1/users/${user.id}/info/`);
+        const data = await res.json();
+        const info = data?.user;
+        if (!info) return;
+
+        // Patch the user in state in-place
+        setState((prev) => {
+          if (prev.status !== "scanning") return prev;
+          return {
+            ...prev,
+            results: prev.results.map((u) =>
+              u.id === user.id
+                ? { ...u, follower_count: info.follower_count, following_count: info.following_count }
+                : u
+            ),
+          };
+        });
+      } catch (e) {
+        console.warn(`Could not fetch ratio for ${user.username}`, e);
+      }
+    }));
+
+    await sleep(DELAY_MS + Math.random() * 1000); // jitter
+  }
+}
+
 
 function App() {
   const [state, setState] = useState<State>({
@@ -268,31 +307,8 @@ function App() {
         receivedData.edges.forEach(x => {
           const node = x.node;
           
-          // Try multiple possible locations for follower/following counts
-          const followerCount = 
-            node.reel?.owner?.edge_followed_by?.count ||
-            node.follower_count;
-            
-          const followingCount = 
-            node.reel?.owner?.edge_follow?.count ||
-            node.following_count;
-          
-          // Debug: Log what we're getting for first few users
-          if (results.length < 3) {
-            console.log(`User: ${node.username}`, {
-              hasReel: !!node.reel,
-              hasOwner: !!node.reel?.owner,
-              followerCount,
-              followingCount,
-              reelData: node.reel,
-              fullNode: node
-            });
-          }
-          
           const enhancedNode = {
             ...node,
-            follower_count: followerCount,
-            following_count: followingCount,
           };
           results.push(enhancedNode);
         });
@@ -343,6 +359,17 @@ function App() {
     // Dependency array not entirely legit, but works this way. TODO: Find a way to fix.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.status]);
+
+  useEffect(() => {
+    // Trigger ratio data enrichment when scanning completes
+    if (state.status === "scanning" && state.percentage === 100 && state.results.length > 0) {
+      // Only start enrichment if we haven't enriched yet (check if any user has ratio data)
+      const hasRatioData = state.results.some(user => user.follower_count != null && user.following_count != null);
+      if (!hasRatioData) {
+        enrichWithRatioData(state.results, setState);
+      }
+    }
+  }, [state.status === "scanning" ? (state as any).percentage : null, state.status, state.status === "scanning" ? (state as any).results : []]);
 
   useEffect(() => {
     const unfollow = async () => {
