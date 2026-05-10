@@ -87,3 +87,13 @@
   position: relative;
   margin-left: 5px;
 }
+
+/* Ratio Badge Pulse Animation */
+@keyframes ratio-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
