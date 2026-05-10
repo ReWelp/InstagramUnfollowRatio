@@ -10,7 +10,7 @@ This version utilizes the Instagram API for better performance.
 ## 🖥️ Desktop Usage
 
 **Where to get the code:**
-- The JavaScript code is available in this repository's `dist/bundle.js` file
+- The JavaScript code is available in this repository's `dist/bundle.js` file: [dist/bundle.js](https://github.com/ReWelp/InstagramUnfollowRatio/blob/main/dist/bundle.js)
 
 **Steps to run:**
 1. Go to Instagram website and log in to your account
