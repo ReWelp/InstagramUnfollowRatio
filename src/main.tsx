@@ -268,10 +268,24 @@ function App() {
         receivedData.edges.forEach(x => {
           const node = x.node;
           // Extract follower/following counts from reel data if available
+          const followerCount = node.reel?.owner?.edge_followed_by?.count;
+          const followingCount = node.reel?.owner?.edge_follow?.count;
+          
+          // Debug: Log what we're getting for first few users
+          if (results.length < 3) {
+            console.log(`User: ${node.username}`, {
+              hasReel: !!node.reel,
+              hasOwner: !!node.reel?.owner,
+              followerCount,
+              followingCount,
+              reelData: node.reel
+            });
+          }
+          
           const enhancedNode = {
             ...node,
-            follower_count: node.reel?.owner?.edge_followed_by?.count,
-            following_count: node.reel?.owner?.edge_follow?.count,
+            follower_count: followerCount,
+            following_count: followingCount,
           };
           results.push(enhancedNode);
         });
