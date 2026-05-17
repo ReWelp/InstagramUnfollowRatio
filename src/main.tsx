@@ -58,66 +58,66 @@ function readScanningResults(setState: (fn: (s: State) => State) => void): reado
   return results;
 }
 
+// Enrichment function to fetch follower/following counts per user - FAST batch processing
 async function enrichWithRatioData(
   setState: (fn: (s: State) => State) => void,
   setToast: (toast: { show: boolean; text: string }) => void,
 ): Promise<RatioEnrichmentResult> {
-  // Fast ratio fetching - 4-hour cache prevents unnecessary API calls
-  const DELAY_MS = 800;
-  const FAILURE_DELAY_MS = 2000;
-  const MAX_CONSECUTIVE_FAILURES = 5;
+  const snapshot = readScanningResults(setState);
+  const usersToEnrich = snapshot.filter(u => needsRatioRefresh(u));
+  
+  if (usersToEnrich.length === 0) {
+    return { enriched: 0, failed: 0, skipped: 0, rateLimited: false };
+  }
+
+  const BATCH_SIZE = 3;
+  const DELAY_MS = 2000; // 2s between batches — stay under radar
   let enriched = 0;
   let failed = 0;
-  let consecutiveFailures = 0;
   let rateLimited = false;
 
-  for (;;) {
-    const snapshot = readScanningResults(setState);
-    const user = snapshot.find(u => needsRatioRefresh(u));
-    if (!user) {
-      break;
-    }
+  for (let i = 0; i < usersToEnrich.length; i += BATCH_SIZE) {
+    const batch = usersToEnrich.slice(i, i + BATCH_SIZE);
 
-    const { counts, rateLimited: hitLimit } = await fetchUserRatioCounts(user.id, user.username);
+    await Promise.all(batch.map(async (user) => {
+      try {
+        const { counts, rateLimited: hitLimit } = await fetchUserRatioCounts(user.id, user.username);
 
-    if (counts) {
-      enriched += 1;
-      consecutiveFailures = 0;
-      setState(prev => {
-        if (prev.status !== "scanning") {
-          return prev;
+        if (counts) {
+          enriched += 1;
+          setState(prev => {
+            if (prev.status !== "scanning") return prev;
+            return {
+              ...prev,
+              results: prev.results.map(u =>
+                u.id === user.id
+                  ? { ...u, follower_count: counts.follower_count, following_count: counts.following_count, ratio_last_fetched: counts.fetched_at }
+                  : u
+              ),
+              unfollowCandidates: recalculateUnfollowCandidates(prev.results),
+            };
+          });
+        } else {
+          failed += 1;
+          if (hitLimit) {
+            rateLimited = true;
+          }
+          console.warn(`Could not fetch ratio for ${user.username}`);
         }
-        const results = prev.results.map(u =>
-          u.id === user.id
-            ? { ...u, follower_count: counts.follower_count, following_count: counts.following_count, ratio_last_fetched: counts.fetched_at }
-            : u,
-        );
-        return {
-          ...prev,
-          results,
-          unfollowCandidates: recalculateUnfollowCandidates(results),
-        };
-      });
-    } else {
-      failed += 1;
-      consecutiveFailures += 1;
-      if (hitLimit) {
-        consecutiveFailures += 1;
+      } catch (e) {
+        failed += 1;
+        console.warn(`Could not fetch ratio for ${user.username}`, e);
       }
-      console.warn(`Could not fetch ratio for ${user.username}`);
-      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        rateLimited = true;
-        break;
-      }
-      await sleep(FAILURE_DELAY_MS);
-      continue;
-    }
+    }));
 
     if (enriched > 0 && enriched % 10 === 0) {
       setToast({ show: true, text: `Ratios: ${enriched} loaded…` });
     }
 
-    await sleep(DELAY_MS + Math.random() * 400);
+    // Don't sleep after the last batch
+    if (i + BATCH_SIZE < usersToEnrich.length) {
+      await sleep(DELAY_MS + Math.random() * 1000);
+    }
   }
 
   const remaining = readScanningResults(setState).filter(u => needsRatioRefresh(u)).length;
