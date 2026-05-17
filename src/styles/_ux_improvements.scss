@@ -97,3 +97,29 @@
     opacity: 0.6;
   }
 }
+
+/* Unfollow Pulse Animation */
+@keyframes unfollow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}
+
+.unfollow-pulse {
+  animation: unfollow-pulse 2s infinite;
+  border: 2px solid #ef4444 !important;
+  border-radius: 8px;
+}
+
+.unfollow-reason-badge {
+  background: #ef4444;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  margin-top: 4px;
+}

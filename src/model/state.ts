@@ -3,6 +3,7 @@ import { ScanningTab } from "./scanning-tab";
 import { ScanningFilter } from "./scanning-filter";
 import { UnfollowLogEntry } from "./unfollow-log-entry";
 import { UnfollowFilter } from "./unfollow-filter";
+import { UnfollowCandidate } from "../utils/auto-unfollow-logic";
 
 type ScanningState = {
   readonly status: 'scanning';
@@ -14,6 +15,7 @@ type ScanningState = {
   readonly whitelistedResults: readonly UserNode[];
   readonly selectedResults: readonly UserNode[];
   readonly filter: ScanningFilter;
+  readonly unfollowCandidates: readonly UnfollowCandidate[];
 };
 
 type UnfollowingState = {

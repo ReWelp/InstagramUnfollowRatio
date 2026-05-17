@@ -405,10 +405,11 @@ export const Searching = ({
         </nav>
         {getCurrentPageUnfollowers(usersForDisplay, state.page).map(user => {
           const firstLetter = user.username.substring(0, 1).toUpperCase();
+          const isUnfollowCandidate = state.unfollowCandidates.some(c => c.user.id === user.id);
           return (
             <>
               {firstLetter !== currentLetter && onNewLetter(firstLetter)}
-              <label className="result-item">
+              <label className={`result-item ${isUnfollowCandidate ? 'unfollow-pulse' : ''}`}>
                 <div className="flex grow align-center">
                   <div
                     className="avatar-container"
@@ -475,6 +476,13 @@ export const Searching = ({
                     followerCount={user.follower_count}
                     followingCount={user.following_count}
                   />
+                  {isUnfollowCandidate && (
+                    <div className="unfollow-reason-badge">
+                      {state.unfollowCandidates.find(c => c.user.id === user.id)?.reason === 'POSTED_NO_FOLLOWBACK' && '📵 24h+ Posted'}
+                      {state.unfollowCandidates.find(c => c.user.id === user.id)?.reason === 'TIMEOUT_NO_FOLLOWBACK' && '⏰ 48h+ Timeout'}
+                      {state.unfollowCandidates.find(c => c.user.id === user.id)?.reason === 'EGO_AURA' && '🎯 Ego/Aura'}
+                    </div>
+                  )}
                 </div>
                 <div className="flex align-center gap-small">
                   <button

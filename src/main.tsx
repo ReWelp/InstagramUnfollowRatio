@@ -23,6 +23,8 @@ import { Toolbar } from "./components/Toolbar";
 import { Unfollowing } from "./components/Unfollowing";
 import { Timings } from "./model/timings";
 import { loadWhitelist, saveWhitelist, loadTimings, saveTimings } from "./utils/whitelist-manager";
+import { getRecentFollows } from "./utils/follow-history-manager";
+import { getUnfollowCandidates } from "./utils/auto-unfollow-logic";
 
 // pause
 let scanningPaused = false;
@@ -140,6 +142,7 @@ function App() {
         showBadRatioOnly: false,
         badRatioThreshold: 1.0,
       },
+      unfollowCandidates: [],
     });
   };
 
@@ -378,6 +381,22 @@ function App() {
       }
     }
   }, [state.status === "scanning" ? (state as any).percentage : null, state.status, state.status === "scanning" ? (state as any).results : []]);
+
+  useEffect(() => {
+    // Calculate unfollow candidates when results are available
+    if (state.status === "scanning" && state.results.length > 0) {
+      const recentFollows = getRecentFollows(96); // Get follows from past 4 days
+      const candidates = getUnfollowCandidates(state.results, recentFollows);
+      
+      setState(prev => {
+        if (prev.status !== "scanning") return prev;
+        return {
+          ...prev,
+          unfollowCandidates: candidates,
+        };
+      });
+    }
+  }, [state.status === "scanning" ? (state as any).results : []]);
 
   useEffect(() => {
     const unfollow = async () => {
