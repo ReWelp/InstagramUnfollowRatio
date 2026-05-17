@@ -1,10 +1,13 @@
 import { sleep } from './utils';
 
 const IG_APP_ID = '936619743392459';
+const RATIO_CACHE_HOURS = 4; // 4 hours cache
+const RATIO_CACHE_MS = RATIO_CACHE_HOURS * 60 * 60 * 1000;
 
 export interface RatioCounts {
   readonly follower_count: number;
   readonly following_count: number;
+  readonly fetched_at: number;
 }
 
 function buildHeaders(): Record<string, string> {
@@ -25,7 +28,7 @@ export function isHtmlOrBlockedResponse(response: Response, bodyText: string): b
   );
 }
 
-function parseCountsFromUserObject(user: Record<string, unknown>): RatioCounts | null {
+function parseCountsFromUserObject(user: Record<string, unknown>): Omit<RatioCounts, 'fetched_at'> | null {
   const follower =
     (user.follower_count as number | undefined) ??
     (user as { edge_followed_by?: { count?: number } }).edge_followed_by?.count;
@@ -39,7 +42,7 @@ function parseCountsFromUserObject(user: Record<string, unknown>): RatioCounts |
   return null;
 }
 
-async function tryWebProfileInfo(username: string): Promise<RatioCounts | null> {
+async function tryWebProfileInfo(username: string): Promise<Omit<RatioCounts, 'fetched_at'> | null> {
   try {
     const res = await fetch(
       `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
@@ -57,7 +60,7 @@ async function tryWebProfileInfo(username: string): Promise<RatioCounts | null> 
   }
 }
 
-async function tryUserInfo(userId: string): Promise<RatioCounts | null> {
+async function tryUserInfo(userId: string): Promise<Omit<RatioCounts, 'fetched_at'> | null> {
   try {
     const res = await fetch(`https://www.instagram.com/api/v1/users/${userId}/info/`, {
       headers: buildHeaders(),
@@ -75,30 +78,80 @@ async function tryUserInfo(userId: string): Promise<RatioCounts | null> {
   }
 }
 
+/**
+ * Check if a user needs fresh ratio data
+ * Returns true if:
+ * - Missing follower/following counts
+ * - No timestamp recorded (old data)
+ * - Timestamp older than RATIO_CACHE_HOURS hours
+ */
+export function needsRatioRefresh(user: { follower_count?: number; following_count?: number; ratio_last_fetched?: number }): boolean {
+  // Never had data
+  if (user.follower_count == null || user.following_count == null) {
+    return true;
+  }
+
+  // No timestamp (data from before this update)
+  if (user.ratio_last_fetched == null) {
+    return true;
+  }
+
+  // Data is stale (older than cache hours)
+  if (Date.now() - user.ratio_last_fetched > RATIO_CACHE_MS) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function fetchUserRatioCounts(
   userId: string,
   username: string,
 ): Promise<{ counts: RatioCounts | null; rateLimited: boolean }> {
   const fromProfile = await tryWebProfileInfo(username);
   if (fromProfile) {
-    return { counts: fromProfile, rateLimited: false };
+    return {
+      counts: {
+        ...fromProfile,
+        fetched_at: Date.now(),
+      },
+      rateLimited: false,
+    };
   }
 
   const fromInfo = await tryUserInfo(userId);
   if (fromInfo) {
-    return { counts: fromInfo, rateLimited: false };
+    return {
+      counts: {
+        ...fromInfo,
+        fetched_at: Date.now(),
+      },
+      rateLimited: false,
+    };
   }
 
   // Second profile attempt after brief pause (transient errors)
   await sleep(300);
   const retryProfile = await tryWebProfileInfo(username);
   if (retryProfile) {
-    return { counts: retryProfile, rateLimited: false };
+    return {
+      counts: {
+        ...retryProfile,
+        fetched_at: Date.now(),
+      },
+      rateLimited: false,
+    };
   }
 
   const retryInfo = await tryUserInfo(userId);
   if (retryInfo) {
-    return { counts: retryInfo, rateLimited: false };
+    return {
+      counts: {
+        ...retryInfo,
+        fetched_at: Date.now(),
+      },
+      rateLimited: false,
+    };
   }
 
   return { counts: null, rateLimited: true };

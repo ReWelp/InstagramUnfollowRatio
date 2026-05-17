@@ -22,6 +22,7 @@ export interface UserNode {
     // These may be returned by some Instagram GraphQL query variants
     readonly follower_count?: number;
     readonly following_count?: number;
+    readonly ratio_last_fetched?: number;
 }
 
 export interface Reel {

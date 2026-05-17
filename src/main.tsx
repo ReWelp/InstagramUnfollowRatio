@@ -33,7 +33,7 @@ import {
   trackFollowNow,
   getFollowEntryForUser,
 } from "./utils/follow-date-sync";
-import { fetchUserRatioCounts, RatioEnrichmentResult } from "./utils/ratio-fetcher";
+import { fetchUserRatioCounts, RatioEnrichmentResult, needsRatioRefresh } from "./utils/ratio-fetcher";
 
 // pause
 let scanningPaused = false;
@@ -71,9 +71,7 @@ async function enrichWithRatioData(
 
   for (;;) {
     const snapshot = readScanningResults(setState);
-    const user = snapshot.find(
-      u => u.follower_count == null || u.following_count == null,
-    );
+    const user = snapshot.find(u => needsRatioRefresh(u));
     if (!user) {
       break;
     }
@@ -89,7 +87,7 @@ async function enrichWithRatioData(
         }
         const results = prev.results.map(u =>
           u.id === user.id
-            ? { ...u, follower_count: counts.follower_count, following_count: counts.following_count }
+            ? { ...u, follower_count: counts.follower_count, following_count: counts.following_count, ratio_last_fetched: counts.fetched_at }
             : u,
         );
         return {
@@ -118,9 +116,7 @@ async function enrichWithRatioData(
     await sleep(DELAY_MS + Math.random() * 2000);
   }
 
-  const remaining = readScanningResults(setState).filter(
-    u => u.follower_count == null || u.following_count == null,
-  ).length;
+  const remaining = readScanningResults(setState).filter(u => needsRatioRefresh(u)).length;
 
   return {
     enriched,
@@ -390,12 +386,13 @@ function App() {
         receivedData.edges.forEach(x => {
           const node = x.node;
           const owner = node.reel?.owner;
+          const followerCount = node.follower_count ?? owner?.edge_followed_by?.count;
+          const followingCount = node.following_count ?? owner?.edge_follow?.count;
           const enhancedNode = {
             ...node,
-            follower_count:
-              node.follower_count ?? owner?.edge_followed_by?.count,
-            following_count:
-              node.following_count ?? owner?.edge_follow?.count,
+            follower_count: followerCount,
+            following_count: followingCount,
+            ratio_last_fetched: (followerCount && followingCount) ? Date.now() : undefined,
           };
           results.push(enhancedNode);
         });
@@ -528,9 +525,7 @@ function App() {
       }
 
       if (!cancelled) {
-        const missing = readScanningResults(setState).filter(
-          u => u.follower_count == null || u.following_count == null,
-        ).length;
+        const missing = readScanningResults(setState).filter(u => needsRatioRefresh(u)).length;
         if (missing > 0) {
           setToast({ show: true, text: `Loading ratios for ${missing} profiles (slow)…` });
           const ratioResult = await enrichWithRatioData(setState, setToast);
@@ -618,14 +613,16 @@ function App() {
     if (state.status !== "scanning" || state.results.length === 0) {
       return;
     }
-    const missing = state.results.filter(
-      u => u.follower_count == null || u.following_count == null,
-    ).length;
+    const missing = state.results.filter(u => needsRatioRefresh(u)).length;
     if (missing === 0) {
       setToast({ show: true, text: "All profiles already have ratio data." });
       return;
     }
-    setToast({ show: true, text: `Retrying ratios for ${missing} profiles…` });
+    const staleCount = state.results.filter(u =>
+      u.follower_count != null && u.following_count != null &&
+      u.ratio_last_fetched && (Date.now() - u.ratio_last_fetched) > 4 * 60 * 60 * 1000
+    ).length;
+    setToast({ show: true, text: `Retrying ratios for ${missing} profiles (${staleCount} stale, ${missing - staleCount} missing)…` });
     const ratioResult = await enrichWithRatioData(setState, setToast);
     if (ratioResult.rateLimited) {
       setToast({
