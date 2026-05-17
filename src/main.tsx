@@ -62,7 +62,9 @@ async function enrichWithRatioData(
   setState: (fn: (s: State) => State) => void,
   setToast: (toast: { show: boolean; text: string }) => void,
 ): Promise<RatioEnrichmentResult> {
-  const DELAY_MS = 4500;
+  // Fast ratio fetching - 4-hour cache prevents unnecessary API calls
+  const DELAY_MS = 800;
+  const FAILURE_DELAY_MS = 2000;
   const MAX_CONSECUTIVE_FAILURES = 5;
   let enriched = 0;
   let failed = 0;
@@ -107,13 +109,15 @@ async function enrichWithRatioData(
         rateLimited = true;
         break;
       }
+      await sleep(FAILURE_DELAY_MS);
+      continue;
     }
 
     if (enriched > 0 && enriched % 10 === 0) {
       setToast({ show: true, text: `Ratios: ${enriched} loaded…` });
     }
 
-    await sleep(DELAY_MS + Math.random() * 2000);
+    await sleep(DELAY_MS + Math.random() * 400);
   }
 
   const remaining = readScanningResults(setState).filter(u => needsRatioRefresh(u)).length;
@@ -527,7 +531,7 @@ function App() {
       if (!cancelled) {
         const missing = readScanningResults(setState).filter(u => needsRatioRefresh(u)).length;
         if (missing > 0) {
-          setToast({ show: true, text: `Loading ratios for ${missing} profiles (slow)…` });
+          setToast({ show: true, text: `Loading ratios for ${missing} profiles…` });
           const ratioResult = await enrichWithRatioData(setState, setToast);
           if (!cancelled) {
             if (ratioResult.rateLimited) {
