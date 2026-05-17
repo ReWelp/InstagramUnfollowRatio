@@ -6,4 +6,5 @@ export interface ScanningFilter {
   readonly showWithOutProfilePicture: boolean;
   readonly showBadRatioOnly: boolean;
   readonly badRatioThreshold: number;
+  readonly showAutoUnfollowOnly: boolean;
 }

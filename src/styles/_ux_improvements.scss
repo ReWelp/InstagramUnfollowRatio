@@ -112,14 +112,102 @@
   animation: unfollow-pulse 2s infinite;
   border: 2px solid #ef4444 !important;
   border-radius: 8px;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.avatar-unfollow-pulse::after {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.85) !important;
+  animation: unfollow-pulse 2s infinite;
 }
 
 .unfollow-reason-badge {
-  background: #ef4444;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 8px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35);
+  flex-shrink: 0;
+}
+
+.unfollow-counter {
+  color: #ef4444;
+  font-weight: 600;
   margin-top: 4px;
+}
+
+.unfollow-badge {
+  margin-right: 4px;
+}
+
+.auto-unfollow-section {
+  padding: 4px 0 8px;
+}
+
+.auto-unfollow-hint {
+  margin: 6px 0 0;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.35;
+}
+
+.unfollow-stats {
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+
+  .stat-title {
+    display: block;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+}
+
+.unfollow-stats-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.follow-tracked-label {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 2px;
+}
+
+.track-follow-button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: rgba(0, 122, 255, 0.25);
+    border-color: #007aff;
+  }
+
+  &.tracked {
+    background: rgba(52, 199, 89, 0.2);
+    border-color: rgba(52, 199, 89, 0.5);
+    color: #34c759;
+  }
 }

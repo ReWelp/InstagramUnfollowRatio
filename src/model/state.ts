@@ -16,6 +16,7 @@ type ScanningState = {
   readonly selectedResults: readonly UserNode[];
   readonly filter: ScanningFilter;
   readonly unfollowCandidates: readonly UnfollowCandidate[];
+  readonly followHistoryVersion: number;
 };
 
 type UnfollowingState = {

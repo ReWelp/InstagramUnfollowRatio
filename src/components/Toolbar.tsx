@@ -19,6 +19,13 @@ interface ToolBarProps {
   onWhitelistUpdate: (users: readonly UserNode[]) => void;
 }
 
+function getAutoUnfollowIds(state: State): ReadonlySet<string> | undefined {
+  if (state.status !== "scanning") {
+    return undefined;
+  }
+  return new Set(state.unfollowCandidates.map(c => c.user.id));
+}
+
 export const Toolbar = ({
   isActiveProcess,
   state,
@@ -82,6 +89,7 @@ export const Toolbar = ({
                     state.currentTab,
                     state.searchTerm,
                     state.filter,
+                    getAutoUnfollowIds(state),
                   ),
                 );
               case "initial":
@@ -100,7 +108,7 @@ export const Toolbar = ({
           title="Export to JSON"
           onClick={() => {
             if (state.status === "scanning") {
-              exportToJSON(getUsersForDisplay(state.results, state.whitelistedResults, state.currentTab, state.searchTerm, state.filter));
+              exportToJSON(getUsersForDisplay(state.results, state.whitelistedResults, state.currentTab, state.searchTerm, state.filter, getAutoUnfollowIds(state)));
             }
           }}
           disabled={state.status !== "scanning"}
@@ -112,7 +120,7 @@ export const Toolbar = ({
           title="Export to CSV"
           onClick={() => {
             if (state.status === "scanning") {
-              exportToCSV(getUsersForDisplay(state.results, state.whitelistedResults, state.currentTab, state.searchTerm, state.filter));
+              exportToCSV(getUsersForDisplay(state.results, state.whitelistedResults, state.currentTab, state.searchTerm, state.filter, getAutoUnfollowIds(state)));
             }
           }}
           disabled={state.status !== "scanning"}
@@ -156,7 +164,7 @@ export const Toolbar = ({
             disabled={state.percentage < 100}
             checked={
               (() => {
-                const displayed = getUsersForDisplay(state.results, state.whitelistedResults, state.currentTab, state.searchTerm, state.filter);
+                const displayed = getUsersForDisplay(state.results, state.whitelistedResults, state.currentTab, state.searchTerm, state.filter, getAutoUnfollowIds(state));
                 const pageUsers = getCurrentPageUnfollowers(displayed, state.page);
                 // Fix: Check if pageUsers is not empty and all are selected
                 // Previous logic didn't account for empty page or partial selections correctly
@@ -184,6 +192,7 @@ export const Toolbar = ({
                 state.currentTab,
                 state.searchTerm,
                 state.filter,
+                getAutoUnfollowIds(state),
               ).length
             }
             className="toggle-all-checkbox"

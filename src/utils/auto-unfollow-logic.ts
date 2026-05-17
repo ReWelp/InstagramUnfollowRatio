@@ -105,3 +105,16 @@ export function getUnfollowReasonLabel(reason: UnfollowReason): string {
       return 'Unknown';
   }
 }
+
+export function getUnfollowReasonBadge(reason: UnfollowReason): { emoji: string; text: string } {
+  switch (reason) {
+    case UnfollowReason.POSTED_NO_FOLLOWBACK:
+      return { emoji: '📵', text: '24h+ Posted' };
+    case UnfollowReason.TIMEOUT_NO_FOLLOWBACK:
+      return { emoji: '⏰', text: '48h+ Timeout' };
+    case UnfollowReason.EGO_AURA:
+      return { emoji: '🎯', text: 'Ego/Aura' };
+    default:
+      return { emoji: '⚠️', text: 'Auto-Unfollow' };
+  }
+}

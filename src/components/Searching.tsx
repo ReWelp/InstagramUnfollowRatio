@@ -5,6 +5,10 @@ import { UserNode } from "../model/user";
 import { WHITELISTED_RESULTS_STORAGE_KEY } from "../constants/constants";
 import { hasBadRatio } from "../ratio";
 import { RatioBadge } from "./RatioBadge";
+import { addTestFollowEntry, cleanupOldFollows } from "../utils/follow-history-manager";
+import { getUnfollowReasonBadge } from "../utils/auto-unfollow-logic";
+import { FOLLOW_HISTORY_STORAGE_KEY, FollowHistoryEntry } from "../model/follow-history";
+import { getFollowEntryForUser } from "../utils/follow-date-sync";
 
 
 export interface SearchingProps {
@@ -16,6 +20,21 @@ export interface SearchingProps {
   toggleUser: (checked: boolean, user: UserNode) => void;
   UserCheckIcon: React.FC;
   UserUncheckIcon: React.FC;
+  onSyncFollowHistory: () => void;
+  onTrackFollow: (user: UserNode) => void;
+}
+
+function formatFollowAge(entry: FollowHistoryEntry): string {
+  const hours = (Date.now() - entry.followedAt) / (1000 * 60 * 60);
+  const estimated = entry.followDateSource === "estimated";
+  const prefix = estimated ? "~" : "";
+  if (hours < 1) {
+    return `${prefix}<1h`;
+  }
+  if (hours < 48) {
+    return `${prefix}${Math.round(hours)}h`;
+  }
+  return `${prefix}${Math.round(hours / 24)}d`;
 }
 
 export const Searching = ({
@@ -27,18 +46,29 @@ export const Searching = ({
   toggleUser,
   UserCheckIcon,
   UserUncheckIcon,
+  onSyncFollowHistory,
+  onTrackFollow,
 }: SearchingProps) => {
   if (state.status !== "scanning") {
     return null;
   }
 
+  const autoUnfollowIds = new Set(state.unfollowCandidates.map(c => c.user.id));
   const usersForDisplay = getUsersForDisplay(
     state.results,
     state.whitelistedResults,
     state.currentTab,
     state.searchTerm,
     state.filter,
+    autoUnfollowIds,
   );
+
+  const bumpFollowHistory = () => {
+    setState({
+      ...state,
+      followHistoryVersion: state.followHistoryVersion + 1,
+    });
+  };
   let currentLetter = "";
 
   const onNewLetter = (firstLetter: string) => {
@@ -216,7 +246,57 @@ export const Searching = ({
             )}
           </div>
 
+          <div className="auto-unfollow-section">
+            <div style={{
+              border: "none",
+              borderTop: "1px solid rgba(255,255,255,0.1)",
+              margin: "8px 0",
+            }} />
+            <label className="badge m-small" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={state.filter.showAutoUnfollowOnly}
+                onChange={(e) => {
+                  if (state.status !== "scanning") return;
+                  if (state.selectedResults.length > 0 && !confirm("Changing filter options will clear selected users")) {
+                    return;
+                  }
+                  setState({
+                    ...state,
+                    selectedResults: [],
+                    filter: { ...state.filter, showAutoUnfollowOnly: e.currentTarget.checked },
+                  });
+                }}
+              />
+              🔴 Auto-Unfollow Only
+            </label>
+            <p className="auto-unfollow-hint">
+              Syncs follow dates from your following list (API + order estimate). Works for follows before install or on other devices.
+            </p>
+            <button
+              type="button"
+              className="button-secondary"
+              style={{ width: "100%", marginTop: 6 }}
+              onClick={onSyncFollowHistory}
+              disabled={state.percentage < 100}
+            >
+              🔄 Sync Follow Dates
+            </button>
+          </div>
+
           <div className="sidebar-buttons-grid">
+            <button
+              className="button-secondary danger-text"
+              onClick={() => {
+                const candidateUsers = state.unfollowCandidates.map(c => c.user);
+                const currentIds = new Set(state.selectedResults.map(u => u.id));
+                const toAdd = candidateUsers.filter(u => !currentIds.has(u.id));
+                setState({ ...state, selectedResults: [...state.selectedResults, ...toAdd] });
+              }}
+              disabled={state.unfollowCandidates.length === 0}
+            >
+              ⚡ Select Auto-Unfollow
+            </button>
             <button
               className="button-secondary"
               onClick={() => {
@@ -269,6 +349,41 @@ export const Searching = ({
             >
               Clear
             </button>
+            <button
+              className="button-secondary"
+              onClick={() => {
+                if (usersForDisplay.length === 0) return;
+                const testUser = usersForDisplay[0];
+                addTestFollowEntry(testUser.id, testUser.username, 25, true);
+                alert(`Test: ${testUser.username} marked as followed 25h ago (posted, no followback)`);
+                bumpFollowHistory();
+              }}
+            >
+              🧪 Test 25h
+            </button>
+            <button
+              className="button-secondary"
+              onClick={() => {
+                if (usersForDisplay.length === 0) return;
+                const testUser = usersForDisplay[0];
+                addTestFollowEntry(testUser.id, testUser.username, 50, false);
+                alert(`Test: ${testUser.username} marked as followed 50h ago (48h timeout)`);
+                bumpFollowHistory();
+              }}
+            >
+              🧪 Test 50h
+            </button>
+            <button
+              className="button-secondary danger-text"
+              onClick={() => {
+                localStorage.removeItem(FOLLOW_HISTORY_STORAGE_KEY);
+                cleanupOldFollows(0);
+                alert('Follow history cleared');
+                bumpFollowHistory();
+              }}
+            >
+              🗑️ Clear History
+            </button>
           </div>
           <div className="sidebar-stats">
             <p>Displayed: {usersForDisplay.length}</p>
@@ -276,6 +391,19 @@ export const Searching = ({
             <p className="whitelist-counter">
               <span className="whitelist-badge">★</span> Whitelisted: {state.whitelistedResults.length}
             </p>
+            <p className="unfollow-counter">
+              <span className="unfollow-badge">⚠️</span> Auto-Unfollow: {state.unfollowCandidates.length}
+            </p>
+            {state.unfollowCandidates.length > 0 && (
+              <div className="unfollow-stats">
+                <span className="stat-title">Candidates by rule</span>
+                <div className="unfollow-stats-grid">
+                  <span>📵 24h: {state.unfollowCandidates.filter(c => c.reason === 'POSTED_NO_FOLLOWBACK').length}</span>
+                  <span>⏰ 48h: {state.unfollowCandidates.filter(c => c.reason === 'TIMEOUT_NO_FOLLOWBACK').length}</span>
+                  <span>🎯 Ego: {state.unfollowCandidates.filter(c => c.reason === 'EGO_AURA').length}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {state.percentage === 100 && (
@@ -405,14 +533,17 @@ export const Searching = ({
         </nav>
         {getCurrentPageUnfollowers(usersForDisplay, state.page).map(user => {
           const firstLetter = user.username.substring(0, 1).toUpperCase();
-          const isUnfollowCandidate = state.unfollowCandidates.some(c => c.user.id === user.id);
+          const candidate = state.unfollowCandidates.find(c => c.user.id === user.id);
+          const isUnfollowCandidate = candidate != null;
+          const reasonBadge = candidate ? getUnfollowReasonBadge(candidate.reason) : null;
+          const followEntry = getFollowEntryForUser(user.id);
           return (
             <>
               {firstLetter !== currentLetter && onNewLetter(firstLetter)}
               <label className={`result-item ${isUnfollowCandidate ? 'unfollow-pulse' : ''}`}>
                 <div className="flex grow align-center">
                   <div
-                    className="avatar-container"
+                    className={`avatar-container ${isUnfollowCandidate ? 'avatar-unfollow-pulse' : ''}`}
                     onClick={(e: React.MouseEvent<HTMLDivElement>) => {
                       // Prevent selecting result when trying to add to whitelist.
                       e.preventDefault();
@@ -465,6 +596,12 @@ export const Searching = ({
                       {user.username}
                     </a>
                     <span className="fs-medium">{user.full_name}</span>
+                    {followEntry && (
+                      <span className="follow-tracked-label" title={`Source: ${followEntry.followDateSource ?? "unknown"}`}>
+                        Followed {formatFollowAge(followEntry)} ago
+                        {followEntry.followDateSource === "estimated" ? " (est.)" : ""}
+                      </span>
+                    )}
                   </div>
                   {user.is_verified && <div className="verified-badge">✔</div>}
                   {user.is_private && (
@@ -476,15 +613,25 @@ export const Searching = ({
                     followerCount={user.follower_count}
                     followingCount={user.following_count}
                   />
-                  {isUnfollowCandidate && (
-                    <div className="unfollow-reason-badge">
-                      {state.unfollowCandidates.find(c => c.user.id === user.id)?.reason === 'POSTED_NO_FOLLOWBACK' && '📵 24h+ Posted'}
-                      {state.unfollowCandidates.find(c => c.user.id === user.id)?.reason === 'TIMEOUT_NO_FOLLOWBACK' && '⏰ 48h+ Timeout'}
-                      {state.unfollowCandidates.find(c => c.user.id === user.id)?.reason === 'EGO_AURA' && '🎯 Ego/Aura'}
+                  {reasonBadge && (
+                    <div className="unfollow-reason-badge" title={`Auto-unfollow: ${reasonBadge.text}`}>
+                      {reasonBadge.emoji} {reasonBadge.text}
                     </div>
                   )}
                 </div>
                 <div className="flex align-center gap-small">
+                  <button
+                    type="button"
+                    className={`track-follow-button ${followEntry ? "tracked" : ""}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onTrackFollow(user);
+                    }}
+                    title={followEntry ? "Refresh follow time to now" : "Track as followed now"}
+                  >
+                    {followEntry ? "✓" : "+"}
+                  </button>
                   <button
                     className={`whitelist-star-button ${state.currentTab === "whitelisted" ? "active" : ""}`}
                     onClick={(e) => {

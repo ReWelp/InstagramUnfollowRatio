@@ -25,12 +25,24 @@ import { Timings } from "./model/timings";
 import { loadWhitelist, saveWhitelist, loadTimings, saveTimings } from "./utils/whitelist-manager";
 import { getRecentFollows } from "./utils/follow-history-manager";
 import { getUnfollowCandidates } from "./utils/auto-unfollow-logic";
+import { installFollowTracker, onFollowHistoryChange } from "./utils/follow-tracker";
+import { enrichFollowHistoryWithPosts } from "./utils/post-checker";
+import {
+  syncFollowHistoryFromFollowingList,
+  pruneFollowHistoryToCurrentFollowing,
+  trackFollowNow,
+} from "./utils/follow-date-sync";
 
 // pause
 let scanningPaused = false;
 
 function pauseScan() {
   scanningPaused = !scanningPaused;
+}
+
+function recalculateUnfollowCandidates(results: readonly UserNode[]): ReturnType<typeof getUnfollowCandidates> {
+  const recentFollows = getRecentFollows(96);
+  return getUnfollowCandidates(results, recentFollows);
 }
 
 // Enrichment function to fetch follower/following counts per user
@@ -105,6 +117,22 @@ function App() {
     saveTimings(timings);
   }, [timings]);
 
+  // Track follows/unfollows made on Instagram while this script runs
+  useEffect(() => {
+    installFollowTracker();
+    return onFollowHistoryChange(() => {
+      setState(prev => {
+        if (prev.status !== "scanning") return prev;
+        const candidates = recalculateUnfollowCandidates(prev.results);
+        return {
+          ...prev,
+          unfollowCandidates: candidates,
+          followHistoryVersion: prev.followHistoryVersion + 1,
+        };
+      });
+    });
+  }, []);
+
 
   let isActiveProcess: boolean;
   switch (state.status) {
@@ -141,8 +169,10 @@ function App() {
         showWithOutProfilePicture: true,
         showBadRatioOnly: false,
         badRatioThreshold: 1.0,
+        showAutoUnfollowOnly: false,
       },
       unfollowCandidates: [],
+      followHistoryVersion: 0,
     });
   };
 
@@ -214,6 +244,9 @@ function App() {
           state.currentTab,
           state.searchTerm,
           state.filter,
+          state.status === "scanning"
+            ? new Set(state.unfollowCandidates.map(c => c.user.id))
+            : undefined,
         ),
       });
     } else {
@@ -239,6 +272,7 @@ function App() {
             state.currentTab,
             state.searchTerm,
             state.filter,
+            new Set(state.unfollowCandidates.map(c => c.user.id)),
           ),
           state.page,
         ),
@@ -383,20 +417,133 @@ function App() {
   }, [state.status === "scanning" ? (state as any).percentage : null, state.status, state.status === "scanning" ? (state as any).results : []]);
 
   useEffect(() => {
-    // Calculate unfollow candidates when results are available
-    if (state.status === "scanning" && state.results.length > 0) {
-      const recentFollows = getRecentFollows(96); // Get follows from past 4 days
-      const candidates = getUnfollowCandidates(state.results, recentFollows);
-      
+    if (state.status !== "scanning" || state.results.length === 0) {
+      return;
+    }
+
+    const candidates = recalculateUnfollowCandidates(state.results);
+    setState(prev => {
+      if (prev.status !== "scanning") return prev;
+      return { ...prev, unfollowCandidates: candidates };
+    });
+  }, [
+    state.status === "scanning" ? state.results : [],
+    state.status === "scanning" ? state.followHistoryVersion : 0,
+  ]);
+
+  useEffect(() => {
+    if (state.status !== "scanning" || state.percentage !== 100 || state.results.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const runAfterScan = async () => {
+      setToast({ show: true, text: "Syncing follow history from Instagram…" });
+
+      const added = await syncFollowHistoryFromFollowingList(
+        state.results,
+        Date.now(),
+        progress => {
+          if (cancelled) return;
+          setToast({
+            show: true,
+            text: `${progress.phase} (${progress.current}/${progress.total})`,
+          });
+        },
+      );
+
+      if (cancelled) return;
+
+      pruneFollowHistoryToCurrentFollowing(new Set(state.results.map(u => u.id)));
+
       setState(prev => {
         if (prev.status !== "scanning") return prev;
         return {
           ...prev,
-          unfollowCandidates: candidates,
+          followHistoryVersion: prev.followHistoryVersion + 1,
+          unfollowCandidates: recalculateUnfollowCandidates(prev.results),
         };
       });
+
+      setToast({
+        show: true,
+        text: added > 0
+          ? `Synced ${added} follow dates. Checking posts…`
+          : "Follow history up to date. Checking posts…",
+      });
+
+      const recentFollows = getRecentFollows(96);
+      if (recentFollows.length > 0) {
+        await enrichFollowHistoryWithPosts(recentFollows, () => {
+          if (cancelled) return;
+          setState(prev => {
+            if (prev.status !== "scanning") return prev;
+            return {
+              ...prev,
+              unfollowCandidates: recalculateUnfollowCandidates(prev.results),
+              followHistoryVersion: prev.followHistoryVersion + 1,
+            };
+          });
+        });
+      }
+
+      if (!cancelled) {
+        setToast({ show: true, text: "Auto-unfollow scan ready." });
+      }
+    };
+
+    runAfterScan();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    state.status === "scanning" ? state.percentage : 0,
+    state.status === "scanning" ? state.results.length : 0,
+  ]);
+
+  const handleSyncFollowHistory = async () => {
+    if (state.status !== "scanning" || state.results.length === 0) {
+      return;
     }
-  }, [state.status === "scanning" ? (state as any).results : []]);
+
+    setToast({ show: true, text: "Syncing follow dates…" });
+    const added = await syncFollowHistoryFromFollowingList(
+      state.results,
+      Date.now(),
+      progress => {
+        setToast({
+          show: true,
+          text: `${progress.phase} (${progress.current}/${progress.total})`,
+        });
+      },
+    );
+
+    pruneFollowHistoryToCurrentFollowing(new Set(state.results.map(u => u.id)));
+
+    setState(prev => {
+      if (prev.status !== "scanning") return prev;
+      return {
+        ...prev,
+        followHistoryVersion: prev.followHistoryVersion + 1,
+        unfollowCandidates: recalculateUnfollowCandidates(prev.results),
+      };
+    });
+
+    setToast({ show: true, text: `Synced ${added} follow date(s).` });
+  };
+
+  const handleTrackFollow = (user: UserNode) => {
+    trackFollowNow(user.id, user.username);
+    if (state.status === "scanning") {
+      setState({
+        ...state,
+        followHistoryVersion: state.followHistoryVersion + 1,
+        unfollowCandidates: recalculateUnfollowCandidates(state.results),
+      });
+    }
+  };
 
   useEffect(() => {
     const unfollow = async () => {
@@ -494,6 +641,8 @@ function App() {
         scanningPaused={scanningPaused}
         UserCheckIcon={UserCheckIcon}
         UserUncheckIcon={UserUncheckIcon}
+        onSyncFollowHistory={handleSyncFollowHistory}
+        onTrackFollow={handleTrackFollow}
       ></Searching>;
       break;
     }

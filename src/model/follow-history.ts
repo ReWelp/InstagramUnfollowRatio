@@ -1,9 +1,12 @@
+export type FollowDateSource = 'live' | 'snapshot' | 'api' | 'estimated' | 'manual';
+
 export interface FollowHistoryEntry {
   readonly userId: string;
   readonly username: string;
   readonly followedAt: number; // timestamp
   readonly hasPostedSinceFollow?: boolean; // tracked if we can detect posts
   readonly lastCheckedAt?: number; // last time we checked for posts
+  readonly followDateSource?: FollowDateSource;
 }
 
 export interface FollowHistory {

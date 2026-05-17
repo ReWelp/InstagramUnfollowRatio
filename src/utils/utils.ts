@@ -72,6 +72,7 @@ export function getUsersForDisplay(
   currentTab: ScanningTab,
   searchTerm: string,
   filter: ScanningFilter,
+  autoUnfollowUserIds?: ReadonlySet<string>,
 ): readonly UserNode[] {
   const users: UserNode[] = [];
   for (const result of results) {
@@ -109,6 +110,9 @@ export function getUsersForDisplay(
       filter.showBadRatioOnly &&
       !hasBadRatio(result.follower_count, result.following_count, filter.badRatioThreshold)
     ) {
+      continue;
+    }
+    if (filter.showAutoUnfollowOnly && autoUnfollowUserIds && !autoUnfollowUserIds.has(result.id)) {
       continue;
     }
     const userMatchesSearchTerm =
