@@ -22,6 +22,7 @@ export interface SearchingProps {
   UserUncheckIcon: React.FC;
   onSyncFollowHistory: () => void;
   onTrackFollow: (user: UserNode) => void;
+  onRetryRatioFetch: () => void;
 }
 
 function formatFollowAge(entry: FollowHistoryEntry): string {
@@ -48,6 +49,7 @@ export const Searching = ({
   UserUncheckIcon,
   onSyncFollowHistory,
   onTrackFollow,
+  onRetryRatioFetch,
 }: SearchingProps) => {
   if (state.status !== "scanning") {
     return null;
@@ -281,6 +283,15 @@ export const Searching = ({
               disabled={state.percentage < 100}
             >
               🔄 Sync Follow Dates
+            </button>
+            <button
+              type="button"
+              className="button-secondary"
+              style={{ width: "100%", marginTop: 6 }}
+              onClick={onRetryRatioFetch}
+              disabled={state.percentage < 100}
+            >
+              📊 Retry Ratios
             </button>
           </div>
 
@@ -628,7 +639,9 @@ export const Searching = ({
                       e.stopPropagation();
                       onTrackFollow(user);
                     }}
-                    title={followEntry ? "Refresh follow time to now" : "Track as followed now"}
+                    title={followEntry
+                      ? "Reset follow time to now (restarts 24h/48h timers — confirm)"
+                      : "Track as followed now"}
                   >
                     {followEntry ? "✓" : "+"}
                   </button>

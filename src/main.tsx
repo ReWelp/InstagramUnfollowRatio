@@ -31,7 +31,9 @@ import {
   syncFollowHistoryFromFollowingList,
   pruneFollowHistoryToCurrentFollowing,
   trackFollowNow,
+  getFollowEntryForUser,
 } from "./utils/follow-date-sync";
+import { fetchUserRatioCounts, RatioEnrichmentResult } from "./utils/ratio-fetcher";
 
 // pause
 let scanningPaused = false;
@@ -45,51 +47,87 @@ function recalculateUnfollowCandidates(results: readonly UserNode[]): ReturnType
   return getUnfollowCandidates(results, recentFollows);
 }
 
-// Enrichment function to fetch follower/following counts per user
+function readScanningResults(setState: (fn: (s: State) => State) => void): readonly UserNode[] {
+  let results: readonly UserNode[] = [];
+  setState(prev => {
+    if (prev.status === "scanning") {
+      results = prev.results;
+    }
+    return prev;
+  });
+  return results;
+}
+
 async function enrichWithRatioData(
-  results: readonly UserNode[],
-  setState: (fn: (s: State) => State) => void
-) {
-  const BATCH_SIZE = 3;
-  const DELAY_MS = 2000; // 2s between batches — stay under radar
+  setState: (fn: (s: State) => State) => void,
+  setToast: (toast: { show: boolean; text: string }) => void,
+): Promise<RatioEnrichmentResult> {
+  const DELAY_MS = 4500;
+  const MAX_CONSECUTIVE_FAILURES = 5;
+  let enriched = 0;
+  let failed = 0;
+  let consecutiveFailures = 0;
+  let rateLimited = false;
 
-  for (let i = 0; i < results.length; i += BATCH_SIZE) {
-    const batch = results.slice(i, i + BATCH_SIZE);
+  for (;;) {
+    const snapshot = readScanningResults(setState);
+    const user = snapshot.find(
+      u => u.follower_count == null || u.following_count == null,
+    );
+    if (!user) {
+      break;
+    }
 
-    await Promise.all(batch.map(async (user) => {
-      try {
-        const res = await fetch(`https://www.instagram.com/api/v1/users/${user.id}/info/`, {
-          headers: {
-            'X-IG-App-ID': '936619743392459',
-          },
-          credentials: 'include',
-        });
+    const { counts, rateLimited: hitLimit } = await fetchUserRatioCounts(user.id, user.username);
 
-        if (!res.ok) return; // skip gracefully if still fails
-
-        const data = await res.json();
-        const info = data?.user;
-        if (!info) return;
-
-        // Patch the user in state in-place
-        setState((prev) => {
-          if (prev.status !== "scanning") return prev;
-          return {
-            ...prev,
-            results: prev.results.map((u) =>
-              u.id === user.id
-                ? { ...u, follower_count: info.follower_count, following_count: info.following_count }
-                : u
-            ),
-          };
-        });
-      } catch (e) {
-        console.warn(`Could not fetch ratio for ${user.username}`, e);
+    if (counts) {
+      enriched += 1;
+      consecutiveFailures = 0;
+      setState(prev => {
+        if (prev.status !== "scanning") {
+          return prev;
+        }
+        const results = prev.results.map(u =>
+          u.id === user.id
+            ? { ...u, follower_count: counts.follower_count, following_count: counts.following_count }
+            : u,
+        );
+        return {
+          ...prev,
+          results,
+          unfollowCandidates: recalculateUnfollowCandidates(results),
+        };
+      });
+    } else {
+      failed += 1;
+      consecutiveFailures += 1;
+      if (hitLimit) {
+        consecutiveFailures += 1;
       }
-    }));
+      console.warn(`Could not fetch ratio for ${user.username}`);
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        rateLimited = true;
+        break;
+      }
+    }
 
-    await sleep(DELAY_MS + Math.random() * 1000); // jitter
+    if (enriched > 0 && enriched % 10 === 0) {
+      setToast({ show: true, text: `Ratios: ${enriched} loaded…` });
+    }
+
+    await sleep(DELAY_MS + Math.random() * 2000);
   }
+
+  const remaining = readScanningResults(setState).filter(
+    u => u.follower_count == null || u.following_count == null,
+  ).length;
+
+  return {
+    enriched,
+    failed,
+    skipped: remaining,
+    rateLimited,
+  };
 }
 
 
@@ -351,9 +389,13 @@ function App() {
         currentFollowedUsersCount += receivedData.edges.length;
         receivedData.edges.forEach(x => {
           const node = x.node;
-          
+          const owner = node.reel?.owner;
           const enhancedNode = {
             ...node,
+            follower_count:
+              node.follower_count ?? owner?.edge_followed_by?.count,
+            following_count:
+              node.following_count ?? owner?.edge_follow?.count,
           };
           results.push(enhancedNode);
         });
@@ -404,17 +446,6 @@ function App() {
     // Dependency array not entirely legit, but works this way. TODO: Find a way to fix.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.status]);
-
-  useEffect(() => {
-    // Trigger ratio data enrichment when scanning completes
-    if (state.status === "scanning" && state.percentage === 100 && state.results.length > 0) {
-      // Only start enrichment if we haven't enriched yet (check if any user has ratio data)
-      const hasRatioData = state.results.some(user => user.follower_count != null && user.following_count != null);
-      if (!hasRatioData) {
-        enrichWithRatioData(state.results, setState);
-      }
-    }
-  }, [state.status === "scanning" ? (state as any).percentage : null, state.status, state.status === "scanning" ? (state as any).results : []]);
 
   useEffect(() => {
     if (state.status !== "scanning" || state.results.length === 0) {
@@ -491,6 +522,35 @@ function App() {
       if (!cancelled) {
         setToast({ show: true, text: "Auto-unfollow scan ready." });
       }
+
+      if (!cancelled) {
+        await sleep(8000);
+      }
+
+      if (!cancelled) {
+        const missing = readScanningResults(setState).filter(
+          u => u.follower_count == null || u.following_count == null,
+        ).length;
+        if (missing > 0) {
+          setToast({ show: true, text: `Loading ratios for ${missing} profiles (slow)…` });
+          const ratioResult = await enrichWithRatioData(setState, setToast);
+          if (!cancelled) {
+            if (ratioResult.rateLimited) {
+              setToast({
+                show: true,
+                text: `Instagram limited ratio requests (${ratioResult.enriched} ok). Wait 15–30 min, then use Retry Ratios.`,
+              });
+            } else if (ratioResult.skipped > 0) {
+              setToast({
+                show: true,
+                text: `Ratios: ${ratioResult.enriched} loaded, ${ratioResult.skipped} still missing.`,
+              });
+            } else {
+              setToast({ show: true, text: `Ratios loaded for ${ratioResult.enriched} profiles.` });
+            }
+          }
+        }
+      }
     };
 
     runAfterScan();
@@ -535,12 +595,49 @@ function App() {
   };
 
   const handleTrackFollow = (user: UserNode) => {
+    const existing = getFollowEntryForUser(user.id);
+    if (existing) {
+      const ok = window.confirm(
+        "Reset follow time to now?\n\nThis restarts the 24h/48h auto-unfollow timers. Ego/Aura will not apply until 24 hours after this reset.",
+      );
+      if (!ok) {
+        return;
+      }
+    }
     trackFollowNow(user.id, user.username);
     if (state.status === "scanning") {
       setState({
         ...state,
         followHistoryVersion: state.followHistoryVersion + 1,
         unfollowCandidates: recalculateUnfollowCandidates(state.results),
+      });
+    }
+  };
+
+  const handleRetryRatioFetch = async () => {
+    if (state.status !== "scanning" || state.results.length === 0) {
+      return;
+    }
+    const missing = state.results.filter(
+      u => u.follower_count == null || u.following_count == null,
+    ).length;
+    if (missing === 0) {
+      setToast({ show: true, text: "All profiles already have ratio data." });
+      return;
+    }
+    setToast({ show: true, text: `Retrying ratios for ${missing} profiles…` });
+    const ratioResult = await enrichWithRatioData(setState, setToast);
+    if (ratioResult.rateLimited) {
+      setToast({
+        show: true,
+        text: `Still rate-limited (${ratioResult.enriched} loaded). Wait 15–30 min before retrying.`,
+      });
+    } else {
+      setToast({
+        show: true,
+        text: ratioResult.skipped > 0
+          ? `Loaded ${ratioResult.enriched}; ${ratioResult.skipped} still missing.`
+          : `Loaded ratios for ${ratioResult.enriched} profiles.`,
       });
     }
   };
@@ -643,6 +740,7 @@ function App() {
         UserUncheckIcon={UserUncheckIcon}
         onSyncFollowHistory={handleSyncFollowHistory}
         onTrackFollow={handleTrackFollow}
+        onRetryRatioFetch={handleRetryRatioFetch}
       ></Searching>;
       break;
     }
