@@ -5,7 +5,7 @@ import { UserNode } from "../model/user";
 import { WHITELISTED_RESULTS_STORAGE_KEY } from "../constants/constants";
 import { hasBadRatio } from "../ratio";
 import { RatioBadge } from "./RatioBadge";
-import { addTestFollowEntry, cleanupOldFollows } from "../utils/follow-history-manager";
+import { addTestFollowEntry, cleanupOldFollows, exportFollowHistory, importFollowHistory } from "../utils/follow-history-manager";
 import { getUnfollowReasonBadge } from "../utils/auto-unfollow-logic";
 import { FOLLOW_HISTORY_STORAGE_KEY, FollowHistoryEntry } from "../model/follow-history";
 import { getFollowEntryForUser } from "../utils/follow-date-sync";
@@ -24,6 +24,9 @@ export interface SearchingProps {
   onTrackFollow: (user: UserNode) => void;
   onRetryRatioFetch: () => void;
 }
+
+// Hidden file input ref for import
+let importFileInput: HTMLInputElement | null = null;
 
 function formatFollowAge(entry: FollowHistoryEntry): string {
   const hours = (Date.now() - entry.followedAt) / (1000 * 60 * 60);
@@ -384,14 +387,74 @@ export const Searching = ({
             >
               🧪 Test 50h
             </button>
+            {/* Follow History Management */}
+            <div style={{ 
+              border: "none", 
+              borderTop: "1px solid rgba(255,255,255,0.1)", 
+              margin: "8px 0" 
+            }} />
+            <p style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)", marginBottom: "6px" }}>
+              Follow History
+            </p>
+            <button
+              className="button-secondary"
+              onClick={() => {
+                exportFollowHistory();
+              }}
+              title="Export follow history to a JSON file for backup"
+            >
+              📥 Export History
+            </button>
+            <button
+              className="button-secondary"
+              onClick={() => {
+                importFileInput?.click();
+              }}
+              title="Import follow history from a backup JSON file"
+            >
+              📤 Import History
+            </button>
+            <input
+              ref={(el) => { importFileInput = el; }}
+              type="file"
+              accept=".json"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                if (!file) return;
+                importFollowHistory(
+                  file,
+                  (count) => {
+                    alert(`Imported ${count} entries from backup`);
+                    bumpFollowHistory();
+                  },
+                  (error) => {
+                    alert(`Import failed: ${error}`);
+                  }
+                );
+                e.currentTarget.value = "";
+              }}
+            />
             <button
               className="button-secondary danger-text"
               onClick={() => {
+                const confirmed = confirm(
+                  '⚠️ Clear Follow History?\n\n' +
+                  'This will PERMANENTLY DELETE all tracked follow dates.\n\n' +
+                  'What this does:\n' +
+                  '• Removes all records of when you followed people\n' +
+                  '• Resets auto-unfollow timers (24h/48h rules)\n' +
+                  '• You will need to re-sync follow dates to use auto-unfollow\n\n' +
+                  '💡 Tip: Export your history first if you want to keep a backup!\n\n' +
+                  'Are you sure you want to proceed?'
+                );
+                if (!confirmed) return;
                 localStorage.removeItem(FOLLOW_HISTORY_STORAGE_KEY);
                 cleanupOldFollows(0);
                 alert('Follow history cleared');
                 bumpFollowHistory();
               }}
+              title="Permanently delete all tracked follow dates (use Export first to backup)"
             >
               🗑️ Clear History
             </button>

@@ -112,3 +112,83 @@ export function addTestFollowEntry(
     hasPostedSinceFollow: hasPosted,
   });
 }
+
+/** Export follow history to a JSON file */
+export function exportFollowHistory(): void {
+  const history = loadFollowHistory();
+  if (!history || history.entries.length === 0) {
+    alert('No follow history to export');
+    return;
+  }
+
+  const dataStr = JSON.stringify(history, null, 2);
+  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(dataBlob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `follow-history-${new Date().toISOString().split('T')[0]}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Import follow history from a JSON file */
+export function importFollowHistory(
+  file: File,
+  onSuccess: (entriesCount: number) => void,
+  onError: (errorMessage: string) => void,
+): void {
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const content = event.target?.result as string;
+      if (!content) {
+        onError('Empty file');
+        return;
+      }
+
+      const imported = JSON.parse(content) as FollowHistory;
+
+      // Validate structure
+      if (!imported.entries || !Array.isArray(imported.entries)) {
+        onError('Invalid file format: missing entries array');
+        return;
+      }
+
+      // Validate entry structure
+      const validEntries = imported.entries.filter(
+        entry => entry.userId && entry.username && entry.followedAt
+      );
+
+      if (validEntries.length !== imported.entries.length) {
+        onError(`Invalid entries found. ${imported.entries.length - validEntries.length} entries skipped.`);
+        return;
+      }
+
+      // Merge with existing history (don't overwrite)
+      const existing = loadFollowHistory() || { entries: [] };
+      const existingIds = new Set(existing.entries.map(e => e.userId));
+      
+      let addedCount = 0;
+      const mergedEntries = [...existing.entries];
+      
+      for (const entry of validEntries) {
+        if (!existingIds.has(entry.userId)) {
+          mergedEntries.push(entry);
+          addedCount++;
+        }
+      }
+
+      const merged = { entries: mergedEntries };
+      saveFollowHistory(merged);
+      onSuccess(addedCount);
+    } catch (e) {
+      onError(`Failed to parse file: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  };
+
+  reader.onerror = () => {
+    onError('Failed to read file');
+  };
+
+  reader.readAsText(file);
+}
