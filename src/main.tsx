@@ -315,52 +315,64 @@ function App() {
     if (state.status !== "scanning") {
       return;
     }
+    const displayed = getUsersForDisplay(
+      state.results,
+      state.whitelistedResults,
+      state.currentTab,
+      state.searchTerm,
+      state.filter,
+      state.status === "scanning"
+        ? new Set(state.unfollowCandidates.map(c => c.user.id))
+        : undefined,
+    );
     if (e.currentTarget.checked) {
+      // Additive: preserve already-selected users from other pages/filters
+      const currentIds = new Set(state.selectedResults.map(u => u.id));
+      const toAdd = displayed.filter(u => !currentIds.has(u.id));
       setState({
         ...state,
-        selectedResults: getUsersForDisplay(
-          state.results,
-          state.whitelistedResults,
-          state.currentTab,
-          state.searchTerm,
-          state.filter,
-          state.status === "scanning"
-            ? new Set(state.unfollowCandidates.map(c => c.user.id))
-            : undefined,
-        ),
+        selectedResults: [...state.selectedResults, ...toAdd],
       });
     } else {
+      // Remove only the currently displayed users from selection
+      const displayedIds = new Set(displayed.map(u => u.id));
       setState({
         ...state,
-        selectedResults: [],
+        selectedResults: state.selectedResults.filter(u => !displayedIds.has(u.id)),
       });
     }
   };
 
-  // it will work the same as toggleAllUsers, but it will select everyone on the current page.
+  // Selects/deselects only the users on the current page (additive, preserves other pages)
   const toggleCurrentePageUsers = (e: ChangeEvent<HTMLInputElement>) => {
     if (state.status !== "scanning") {
       return;
     }
+    const pageUsers = getCurrentPageUnfollowers(
+      getUsersForDisplay(
+        state.results,
+        state.whitelistedResults,
+        state.currentTab,
+        state.searchTerm,
+        state.filter,
+        new Set(state.unfollowCandidates.map(c => c.user.id)),
+      ),
+      state.page,
+    );
     if (e.currentTarget.checked) {
+      // Additive: add page users without wiping selections from other pages
+      const currentIds = new Set(state.selectedResults.map(u => u.id));
+      const toAdd = pageUsers.filter(u => !currentIds.has(u.id));
       setState({
         ...state,
-        selectedResults: getCurrentPageUnfollowers(
-          getUsersForDisplay(
-            state.results,
-            state.whitelistedResults,
-            state.currentTab,
-            state.searchTerm,
-            state.filter,
-            new Set(state.unfollowCandidates.map(c => c.user.id)),
-          ),
-          state.page,
-        ),
+        selectedResults: [...state.selectedResults, ...toAdd],
       });
     } else {
+      // Remove only this page's users from selection
+      const pageUserIds = new Set(pageUsers.map(u => u.id));
       setState({
         ...state,
-        selectedResults: [],
+        selectedResults: state.selectedResults.filter(u => !pageUserIds.has(u.id)),
       });
     }
   };
