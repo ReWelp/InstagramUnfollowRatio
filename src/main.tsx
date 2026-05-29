@@ -6,10 +6,12 @@ import { User, UserNode } from "./model/user";
 import { Toast } from "./components/Toast";
 import { UserCheckIcon } from "./components/icons/UserCheckIcon";
 import { UserUncheckIcon } from "./components/icons/UserUncheckIcon";
-import { DEFAULT_TIME_BETWEEN_SEARCH_CYCLES,
+import {
+  DEFAULT_TIME_BETWEEN_SEARCH_CYCLES,
   DEFAULT_TIME_BETWEEN_UNFOLLOWS,
   DEFAULT_TIME_TO_WAIT_AFTER_FIVE_SEARCH_CYCLES,
-  DEFAULT_TIME_TO_WAIT_AFTER_FIVE_UNFOLLOWS, INSTAGRAM_HOSTNAME } from "./constants/constants";
+  DEFAULT_TIME_TO_WAIT_AFTER_FIVE_UNFOLLOWS, INSTAGRAM_HOSTNAME
+} from "./constants/constants";
 import {
   assertUnreachable,
   getCookie,
@@ -34,6 +36,11 @@ import {
   getFollowEntryForUser,
 } from "./utils/follow-date-sync";
 import { fetchUserRatioCounts, RatioEnrichmentResult, needsRatioRefresh } from "./utils/ratio-fetcher";
+import { getRatioCacheEntry, pruneRatioCache } from "./utils/ratio-cache";
+import { recordScriptRun, recordScanPage, sessionJitter, getSessionStats } from "./utils/session-guard";
+
+// ── Startup: prune stale ratio cache entries once per page load ─────────────
+pruneRatioCache();
 
 // pause
 let scanningPaused = false;
@@ -65,26 +72,30 @@ async function enrichWithRatioData(
 ): Promise<RatioEnrichmentResult> {
   const snapshot = readScanningResults(setState);
   const usersToEnrich = snapshot.filter(u => needsRatioRefresh(u));
-  
+
   if (usersToEnrich.length === 0) {
-    return { enriched: 0, failed: 0, skipped: 0, rateLimited: false };
+    return { enriched: 0, failed: 0, skipped: 0, fromCache: 0, rateLimited: false };
   }
 
-  const BATCH_SIZE = 3;
-  const DELAY_MS = 2000; // 2s between batches — stay under radar
+  // Batch size kept small + variable inter-batch delay to stay under radar
+  const BATCH_SIZE = 2; // reduced from 3 → less parallel load on IG
+  const BASE_DELAY_MS = 2500;
   let enriched = 0;
+  let fromCache = 0;
   let failed = 0;
   let rateLimited = false;
 
   for (let i = 0; i < usersToEnrich.length; i += BATCH_SIZE) {
     const batch = usersToEnrich.slice(i, i + BATCH_SIZE);
 
-    await Promise.all(batch.map(async (user) => {
+    // Sequential within batch to avoid request bursts
+    for (const user of batch) {
       try {
-        const { counts, rateLimited: hitLimit } = await fetchUserRatioCounts(user.id, user.username);
+        const { counts, rateLimited: hitLimit, fromCache: cached } = await fetchUserRatioCounts(user.id, user.username);
 
         if (counts) {
           enriched += 1;
+          if (cached) fromCache += 1;
           setState(prev => {
             if (prev.status !== "scanning") return prev;
             return {
@@ -101,6 +112,8 @@ async function enrichWithRatioData(
           failed += 1;
           if (hitLimit) {
             rateLimited = true;
+            setToast({ show: true, text: "⚠️ Instagram rate-limited ratio requests. Pausing 15 min…" });
+            await sleep(15 * 60 * 1000);
           }
           console.warn(`Could not fetch ratio for ${user.username}`);
         }
@@ -108,15 +121,18 @@ async function enrichWithRatioData(
         failed += 1;
         console.warn(`Could not fetch ratio for ${user.username}`, e);
       }
-    }));
 
-    if (enriched > 0 && enriched % 10 === 0) {
-      setToast({ show: true, text: `Ratios: ${enriched} loaded…` });
+      // Small jitter between individual requests (skipped for cache hits which have no network call)
+      await sleep(300 + sessionJitter());
     }
 
-    // Don't sleep after the last batch
+    if (enriched > 0 && enriched % 10 === 0) {
+      setToast({ show: true, text: `Ratios: ${enriched} loaded (${fromCache} from cache)…` });
+    }
+
+    // Inter-batch delay — skip after the last batch
     if (i + BATCH_SIZE < usersToEnrich.length) {
-      await sleep(DELAY_MS + Math.random() * 1000);
+      await sleep(BASE_DELAY_MS + Math.random() * 1500 + sessionJitter());
     }
   }
 
@@ -126,6 +142,7 @@ async function enrichWithRatioData(
     enriched,
     failed,
     skipped: remaining,
+    fromCache,
     rateLimited,
   };
 }
@@ -189,6 +206,31 @@ function App() {
     if (state.status !== "initial") {
       return;
     }
+
+    // ── Session guard: enforce run gap + daily limit ──────────────────────────
+    const guardResult = recordScriptRun();
+    if (!guardResult.ok) {
+      setToast({ show: true, text: guardResult.warning! });
+      // Wait out the required gap then allow the run
+      if (guardResult.extraDelayMs > 0) {
+        await sleep(guardResult.extraDelayMs);
+      }
+    } else if (guardResult.warning) {
+      // Soft warning — show but don't block
+      setToast({ show: true, text: guardResult.warning });
+      await sleep(3000);
+    }
+
+    // ── Session stats toast ───────────────────────────────────────────────────
+    const stats = getSessionStats();
+    if (stats.runCount > 1) {
+      setToast({
+        show: true,
+        text: `📊 Today: ${stats.runCount} runs · ${stats.scanPages} pages · ${stats.ratioFetches} ratio fetches`,
+      });
+      await sleep(2500);
+    }
+
     const whitelistedResults = loadWhitelist();
     setState({
       status: "scanning",
@@ -392,11 +434,21 @@ function App() {
           const owner = node.reel?.owner;
           const followerCount = node.follower_count ?? owner?.edge_followed_by?.count;
           const followingCount = node.following_count ?? owner?.edge_follow?.count;
+
+          // ── Preload from persistent ratio cache if available ──────────────
+          const cachedRatio = getRatioCacheEntry(node.id);
+          const resolvedFollowers = followerCount ?? cachedRatio?.follower_count;
+          const resolvedFollowing = followingCount ?? cachedRatio?.following_count;
+          const resolvedFetchedAt =
+            (followerCount && followingCount) ? Date.now()
+            : cachedRatio ? cachedRatio.fetched_at
+            : undefined;
+
           const enhancedNode = {
             ...node,
-            follower_count: followerCount,
-            following_count: followingCount,
-            ratio_last_fetched: (followerCount && followingCount) ? Date.now() : undefined,
+            follower_count: resolvedFollowers,
+            following_count: resolvedFollowing,
+            ratio_last_fetched: resolvedFetchedAt,
           };
           results.push(enhancedNode);
         });
@@ -421,20 +473,31 @@ function App() {
           console.info("Scan paused");
         }
 
+        // ── Session guard: record page + apply progressive extra delay ──────
+        const pageGuard = recordScanPage();
+        if (!pageGuard.ok) {
+          // Hard daily limit — pause and warn
+          setToast({ show: true, text: pageGuard.warning! });
+          await sleep(pageGuard.extraDelayMs);
+        } else if (pageGuard.extraDelayMs > 0) {
+          await sleep(pageGuard.extraDelayMs);
+        }
+
         // Human-like behavior: Micro-pause between fetching chunks
-        const microPause = Math.floor(Math.random() * 1500) + 500; // 500ms - 2000ms
+        // Scale up micro-pause based on session jitter (usage-aware)
+        const microPause = Math.floor(Math.random() * 1500) + 500 + sessionJitter(); // 500ms–2000ms + jitter
         await sleep(microPause);
 
         // Standard delay between cycles
         await sleep(Math.floor(Math.random() * (timings.timeBetweenSearchCycles - timings.timeBetweenSearchCycles * 0.7)) + timings.timeBetweenSearchCycles);
-        
+
         scrollCycle++;
         if (scrollCycle > 6) {
           scrollCycle = 0;
-          // Variable long sleep to avoid patterns
+          // Variable long sleep to avoid patterns — jitter scales with daily usage
           const longSleepVar = Math.max(
             0,
-            timings.timeToWaitAfterFiveSearchCycles + (Math.random() * 10000 - 5000), // +/- 5 seconds
+            timings.timeToWaitAfterFiveSearchCycles + (Math.random() * 10000 - 5000) + sessionJitter() * 2,
           );
           setToast({ show: true, text: `Sleeping ${Math.round(longSleepVar / 1000)} seconds to prevent getting temp blocked` });
           await sleep(longSleepVar);
@@ -537,16 +600,25 @@ function App() {
             if (ratioResult.rateLimited) {
               setToast({
                 show: true,
-                text: `Instagram limited ratio requests (${ratioResult.enriched} ok). Wait 15–30 min, then use Retry Ratios.`,
+                text: `⚠️ Instagram limited ratio requests (${ratioResult.enriched} ok, ${ratioResult.fromCache} from cache). Wait 15–30 min, then use Retry Ratios.`,
               });
             } else if (ratioResult.skipped > 0) {
               setToast({
                 show: true,
-                text: `Ratios: ${ratioResult.enriched} loaded, ${ratioResult.skipped} still missing.`,
+                text: `Ratios: ${ratioResult.enriched} loaded (${ratioResult.fromCache} cached), ${ratioResult.skipped} still missing.`,
               });
             } else {
-              setToast({ show: true, text: `Ratios loaded for ${ratioResult.enriched} profiles.` });
+              const cacheNote = ratioResult.fromCache > 0 ? ` (${ratioResult.fromCache} from cache ⚡)` : '';
+              setToast({ show: true, text: `Ratios loaded for ${ratioResult.enriched} profiles${cacheNote}.` });
             }
+          }
+        } else {
+          // All ratios came from cache — let user know
+          const allCached = readScanningResults(setState).filter(
+            u => u.follower_count != null && u.following_count != null
+          ).length;
+          if (allCached > 0) {
+            setToast({ show: true, text: `⚡ All ${allCached} ratio profiles loaded from cache (no extra requests).` });
           }
         }
       }
@@ -619,26 +691,23 @@ function App() {
     }
     const missing = state.results.filter(u => needsRatioRefresh(u)).length;
     if (missing === 0) {
-      setToast({ show: true, text: "All profiles already have ratio data." });
+      setToast({ show: true, text: "⚡ All profiles already have ratio data (served from cache)." });
       return;
     }
-    const staleCount = state.results.filter(u =>
-      u.follower_count != null && u.following_count != null &&
-      u.ratio_last_fetched && (Date.now() - u.ratio_last_fetched) > 4 * 60 * 60 * 1000
-    ).length;
-    setToast({ show: true, text: `Retrying ratios for ${missing} profiles (${staleCount} stale, ${missing - staleCount} missing)…` });
+    setToast({ show: true, text: `Retrying ratios for ${missing} profiles…` });
     const ratioResult = await enrichWithRatioData(setState, setToast);
     if (ratioResult.rateLimited) {
       setToast({
         show: true,
-        text: `Still rate-limited (${ratioResult.enriched} loaded). Wait 15–30 min before retrying.`,
+        text: `⚠️ Still rate-limited (${ratioResult.enriched} loaded, ${ratioResult.fromCache} from cache). Wait 15–30 min before retrying.`,
       });
     } else {
+      const cacheNote = ratioResult.fromCache > 0 ? ` (${ratioResult.fromCache} from cache ⚡)` : '';
       setToast({
         show: true,
         text: ratioResult.skipped > 0
-          ? `Loaded ${ratioResult.enriched}; ${ratioResult.skipped} still missing.`
-          : `Loaded ratios for ${ratioResult.enriched} profiles.`,
+          ? `Loaded ${ratioResult.enriched}${cacheNote}; ${ratioResult.skipped} still missing.`
+          : `Loaded ratios for ${ratioResult.enriched} profiles${cacheNote}.`,
       });
     }
   };
@@ -712,7 +781,7 @@ function App() {
         await sleep(Math.floor(Math.random() * (timings.timeBetweenUnfollows * 1.2 - timings.timeBetweenUnfollows)) + timings.timeBetweenUnfollows);
 
         if (counter % 5 === 0) {
-          setToast({ show: true, text: `Sleeping ${timings.timeToWaitAfterFiveUnfollows / 60000 } minutes to prevent getting temp blocked` });
+          setToast({ show: true, text: `Sleeping ${timings.timeToWaitAfterFiveUnfollows / 60000} minutes to prevent getting temp blocked` });
           await sleep(timings.timeToWaitAfterFiveUnfollows);
         }
         setToast({ show: false });

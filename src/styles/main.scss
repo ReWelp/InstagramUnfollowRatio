@@ -2,8 +2,15 @@
 @use "helpers";
 
 @keyframes ratio-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.6; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.6;
+    }
 }
 
 * {
@@ -23,7 +30,7 @@ html {
         @include helpers.main-layout;
         display: flex;
         flex-direction: column;
-        
+
         .overlay {
             color: variables.$clr-white;
         }
@@ -146,7 +153,7 @@ html {
                     font-size: 0.8rem;
                     margin: 0;
                     cursor: pointer;
-                    
+
                     input {
                         margin: 0;
                     }
@@ -257,6 +264,7 @@ html {
 
                     a {
                         padding: 0 4px;
+
                         &:hover {
                             color: #007aff;
                         }
@@ -852,6 +860,7 @@ html {
         opacity: 0;
         transform: translateY(-10px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -1095,8 +1104,32 @@ html {
         }
     }
 }
-.gap-small { gap: 4px; }
-.button-secondary { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #efefef; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; text-align: left; transition: all 0.2s ease; }
-.button-secondary:hover { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.2); }
-.button-secondary.danger-text { color: #ff4d4d; }
-.button-secondary.danger-text:hover { background: rgba(255, 77, 77, 0.1); }
+
+.gap-small {
+    gap: 4px;
+}
+
+.button-secondary {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #efefef;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    text-align: left;
+    transition: all 0.2s ease;
+}
+
+.button-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.button-secondary.danger-text {
+    color: #ff4d4d;
+}
+
+.button-secondary.danger-text:hover {
+    background: rgba(255, 77, 77, 0.1);
+}

@@ -136,12 +136,12 @@ export const Searching = ({
 
           {/* Ratio Filter Section */}
           <div style={{ padding: "8px 0" }}>
-            <div style={{ 
-              border: "none", 
-              borderTop: "1px solid rgba(255,255,255,0.1)", 
-              margin: "8px 0" 
+            <div style={{
+              border: "none",
+              borderTop: "1px solid rgba(255,255,255,0.1)",
+              margin: "8px 0"
             }} />
-            
+
             <label className="badge m-small" style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
                 type="checkbox"
@@ -151,8 +151,8 @@ export const Searching = ({
                   if (state.selectedResults.length > 0 && !confirm("Changing filter options will clear selected users")) {
                     return;
                   }
-                  setState({ 
-                    ...state, 
+                  setState({
+                    ...state,
                     selectedResults: [],
                     filter: { ...state.filter, showBadRatioOnly: e.currentTarget.checked }
                   });
@@ -186,8 +186,8 @@ export const Searching = ({
                     value={state.filter.badRatioThreshold}
                     onChange={(e) => {
                       if (state.status !== "scanning") return;
-                      setState({ 
-                        ...state, 
+                      setState({
+                        ...state,
                         filter: { ...state.filter, badRatioThreshold: parseFloat(e.currentTarget.value) }
                       });
                     }}
@@ -347,7 +347,7 @@ export const Searching = ({
             <button
               className="button-secondary danger-text"
               onClick={() => {
-                const badRatioUsers = usersForDisplay.filter(u => 
+                const badRatioUsers = usersForDisplay.filter(u =>
                   hasBadRatio(u.follower_count, u.following_count, state.filter.badRatioThreshold)
                 );
                 const currentIds = new Set(state.selectedResults.map(u => u.id));
@@ -388,10 +388,10 @@ export const Searching = ({
               🧪 Test 50h
             </button>
             {/* Follow History Management */}
-            <div style={{ 
-              border: "none", 
-              borderTop: "1px solid rgba(255,255,255,0.1)", 
-              margin: "8px 0" 
+            <div style={{
+              border: "none",
+              borderTop: "1px solid rgba(255,255,255,0.1)",
+              margin: "8px 0"
             }} />
             <p style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.4)", marginBottom: "6px" }}>
               Follow History
@@ -721,7 +721,7 @@ export const Searching = ({
                         // Add to whitelist
                         whitelistedResults = [...state.whitelistedResults, user];
                       }
-                      
+
                       localStorage.setItem(
                         WHITELISTED_RESULTS_STORAGE_KEY,
                         JSON.stringify(whitelistedResults),

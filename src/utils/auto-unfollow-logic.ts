@@ -22,7 +22,7 @@ export function shouldUnfollowUser(
   currentFollowingCount?: number
 ): UnfollowCandidate | null {
   const hoursSinceFollow = (Date.now() - followEntry.followedAt) / (1000 * 60 * 60);
-  
+
   // Only process if within 4 days (96 hours)
   if (hoursSinceFollow > 96) {
     return null; // Too old, requires manual intervention
@@ -73,23 +73,23 @@ export function getUnfollowCandidates(
   followHistory: readonly FollowHistoryEntry[]
 ): UnfollowCandidate[] {
   const candidates: UnfollowCandidate[] = [];
-  
+
   for (const user of users) {
     const followEntry = followHistory.find(entry => entry.userId === user.id);
     if (!followEntry) continue;
-    
+
     const candidate = shouldUnfollowUser(
       user,
       followEntry,
       user.follower_count,
       user.following_count
     );
-    
+
     if (candidate) {
       candidates.push(candidate);
     }
   }
-  
+
   return candidates;
 }
 
